@@ -1,32 +1,20 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import './App.css'
 
 function App() {
   const [pagina, setPagina] = useState('dashboard')
 
-  const [clientes, setClientes] = useState([
-    {
-      id: 'CLI-001',
-      nombre: 'Distribuidora del Centro',
-      correo: 'ventas@distribuidora.com',
-      telefono: '222 123 4567',
-      estado: 'Activo',
-    },
-    {
-      id: 'CLI-002',
-      nombre: 'Comercial Puebla',
-      correo: 'contacto@comercial.mx',
-      telefono: '222 765 4321',
-      estado: 'Activo',
-    },
-    {
-      id: 'CLI-003',
-      nombre: 'Grupo Industrial MX',
-      correo: 'administracion@grupo.mx',
-      telefono: '222 456 7890',
-      estado: 'Activo',
-    },
-  ])
+  const [clientes, setClientes] = useState([])
+  useEffect(() => {
+  fetch('http://localhost:3000/api/clientes')
+    .then((respuesta) => respuesta.json())
+    .then((datos) => {
+      setClientes(datos)
+    })
+    .catch((error) => {
+      console.error('Error al obtener clientes:', error)
+    })
+}, [])
 
   return (
     <div className="erp">
@@ -233,27 +221,34 @@ function Clientes({ clientes, setClientes }) {
     telefono: '',
   })
 
-  const guardarCliente = (event) => {
-    event.preventDefault()
+  const guardarCliente = async (event) => {
+  event.preventDefault()
 
-    if (
-      !nuevoCliente.nombre ||
-      !nuevoCliente.correo ||
-      !nuevoCliente.telefono
-    ) {
-      alert('Completa todos los campos')
-      return
+  if (
+    !nuevoCliente.nombre ||
+    !nuevoCliente.correo ||
+    !nuevoCliente.telefono
+  ) {
+    alert('Completa todos los campos')
+    return
+  }
+
+  try {
+    const respuesta = await fetch('http://localhost:3000/api/clientes', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(nuevoCliente),
+    })
+
+    if (!respuesta.ok) {
+      throw new Error('No se pudo registrar el cliente')
     }
 
-    const cliente = {
-      id: `CLI-${String(clientes.length + 1).padStart(3, '0')}`,
-      nombre: nuevoCliente.nombre,
-      correo: nuevoCliente.correo,
-      telefono: nuevoCliente.telefono,
-      estado: 'Activo',
-    }
+    const clienteCreado = await respuesta.json()
 
-    setClientes([...clientes, cliente])
+    setClientes([...clientes, clienteCreado])
 
     setNuevoCliente({
       nombre: '',
@@ -262,7 +257,11 @@ function Clientes({ clientes, setClientes }) {
     })
 
     setMostrarFormulario(false)
+  } catch (error) {
+    console.error('Error al registrar cliente:', error)
+    alert('Ocurrió un error al registrar el cliente')
   }
+}
   return (
     <>
       <header className="header">
