@@ -1,5 +1,9 @@
 const express = require('express')
 const cors = require('cors')
+const mongoose = require('mongoose')
+require('dotenv').config()
+
+const Cliente = require('./models/Cliente')
 
 const app = express()
 const PORT = 3000
@@ -7,29 +11,7 @@ const PORT = 3000
 app.use(cors())
 app.use(express.json())
 
-let clientes = [
-  {
-    id: 'CLI-001',
-    nombre: 'Distribuidora del Centro',
-    correo: 'ventas@distribuidora.com',
-    telefono: '222 123 4567',
-    estado: 'Activo'
-  },
-  {
-    id: 'CLI-002',
-    nombre: 'Comercial Puebla',
-    correo: 'contacto@comercial.mx',
-    telefono: '222 765 4321',
-    estado: 'Activo'
-  },
-  {
-    id: 'CLI-003',
-    nombre: 'Grupo Industrial MX',
-    correo: 'administracion@grupo.mx',
-    telefono: '222 456 7890',
-    estado: 'Activo'
-  }
-]
+
 
 app.get('/', (req, res) => {
   res.json({
@@ -37,32 +19,59 @@ app.get('/', (req, res) => {
   })
 })
 
-app.get('/api/clientes', (req, res) => {
-  res.json(clientes)
-})
+app.get('/api/clientes', async (req, res) => {
+  try {
+    const clientes = await Cliente.find()
 
-app.post('/api/clientes', (req, res) => {
-  const { nombre, correo, telefono } = req.body
-
-  if (!nombre || !correo || !telefono) {
-    return res.status(400).json({
-      mensaje: 'Todos los campos son obligatorios'
+    res.json(clientes)
+  } catch (error) {
+    res.status(500).json({
+      mensaje: 'Error al obtener los clientes'
     })
   }
+})
 
-  const nuevoCliente = {
-    id: `CLI-${String(clientes.length + 1).padStart(3, '0')}`,
-    nombre,
-    correo,
-    telefono,
-    estado: 'Activo'
+app.post('/api/clientes', async (req, res) => {
+  try {
+    const { nombre, correo, telefono } = req.body
+
+    if (!nombre || !correo || !telefono) {
+      return res.status(400).json({
+        mensaje: 'Todos los campos son obligatorios'
+      })
+    }
+
+    const cantidadClientes = await Cliente.countDocuments()
+
+    const nuevoCliente = new Cliente({
+      id: `CLI-${String(cantidadClientes + 1).padStart(3, '0')}`,
+      nombre,
+      correo,
+      telefono,
+      estado: 'Activo'
+    })
+
+    const clienteGuardado = await nuevoCliente.save()
+
+    res.status(201).json(clienteGuardado)
+  } catch (error) {
+    console.error('Error al registrar cliente:', error)
+
+    res.status(500).json({
+      mensaje: 'Error al registrar el cliente'
+    })
   }
-
-  clientes.push(nuevoCliente)
-
-  res.status(201).json(nuevoCliente)
 })
 
-app.listen(PORT, () => {
-  console.log(`Servidor ERP ejecutándose en http://localhost:${PORT}`)
-})
+mongoose
+  .connect(process.env.MONGODB_URI)
+  .then(() => {
+    console.log('MongoDB conectado correctamente')
+
+    app.listen(PORT, () => {
+      console.log(`Servidor ERP ejecutándose en http://localhost:${PORT}`)
+    })
+  })
+  .catch((error) => {
+    console.error('Error al conectar con MongoDB:', error.message)
+  })
