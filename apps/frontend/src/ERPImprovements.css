@@ -1,0 +1,32 @@
+/* Mejoras visuales incrementales para el ERP. Importar después de App.css */
+.erp-theme-toggle,.erp-menu-toggle{border:1px solid #cbd5e1;background:transparent;color:inherit;border-radius:10px;padding:9px 12px;cursor:pointer;font:inherit;font-size:13px}
+.erp-menu-toggle{display:none}
+.erp-theme-toggle:hover,.erp-menu-toggle:hover{filter:brightness(.94)}
+[data-erp-theme="dark"]{color-scheme:dark}
+[data-erp-theme="dark"] body,[data-erp-theme="dark"] .erp,[data-erp-theme="dark"] .main{background:#0b1220!important;color:#e5edf7!important}
+[data-erp-theme="dark"] .sidebar{background:#111c31!important;color:#e5edf7!important;border-color:#334155!important}
+[data-erp-theme="dark"] .topbar,[data-erp-theme="dark"] .panel,[data-erp-theme="dark"] .stat,[data-erp-theme="dark"] .modal{background:#152238!important;color:#e5edf7!important;border-color:#334155!important}
+[data-erp-theme="dark"] .header,[data-erp-theme="dark"] .header h1,[data-erp-theme="dark"] h2,[data-erp-theme="dark"] h3,[data-erp-theme="dark"] h4,[data-erp-theme="dark"] strong,[data-erp-theme="dark"] td,[data-erp-theme="dark"] th{color:#f1f5f9!important}
+[data-erp-theme="dark"] .muted,[data-erp-theme="dark"] .header p,[data-erp-theme="dark"] .panel p{color:#a8b8cd!important}
+[data-erp-theme="dark"] input,[data-erp-theme="dark"] select,[data-erp-theme="dark"] textarea{background:#0f1b2f!important;color:#f1f5f9!important;border-color:#42536a!important}
+[data-erp-theme="dark"] .table-wrap th,[data-erp-theme="dark"] .table-wrap td{border-color:#334155!important}
+[data-erp-theme="dark"] .table-wrap tr:hover{background:#20304a!important}
+[data-erp-theme="dark"] .overlay{background:rgba(0,0,0,.7)!important}
+[data-erp-theme="dark"] .erp-theme-toggle,[data-erp-theme="dark"] .erp-menu-toggle{border-color:#475569;color:#e5edf7}
+@media(max-width:800px){
+ .erp-menu-toggle{display:inline-flex;align-items:center}
+ .erp .sidebar{display:none!important;position:fixed!important;top:0;bottom:0;left:0;width:min(82vw,290px)!important;z-index:1100;overflow-y:auto}
+ .erp .sidebar.mobile-open{display:block!important}
+ .erp .main{margin-left:0!important;width:100%!important;min-width:0!important;padding:12px!important}
+ .erp .topbar{display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between}
+ .erp .topbar>span{display:none}
+ .erp .topbar .user{margin-left:auto}
+ .erp .header{display:flex;flex-wrap:wrap;gap:10px}
+ .erp .stats{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+ .erp .two-col,.erp .inventory-layout{display:grid;grid-template-columns:minmax(0,1fr)!important}
+ .erp .panel-head,.erp .head-actions{display:flex;flex-wrap:wrap;gap:10px}
+ .erp .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+ .erp .modal{width:min(96vw,640px)!important;max-height:90dvh;overflow-y:auto}
+ .erp .form-grid{grid-template-columns:minmax(0,1fr)!important}
+ .erp .item-row{display:flex;flex-wrap:wrap}
+}

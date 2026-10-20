@@ -25,6 +25,24 @@ const PORT = Number(process.env.PORT) || 3000
 const wrap = fn => (req,res,next) => Promise.resolve(fn(req,res,next)).catch(next)
 const fail = (res,msg,code=400) => res.status(code).json({ mensaje: msg })
 const valid = (body,fields) => fields.every(k => typeof body[k] === 'string' && body[k].trim())
+const normalize = (route, raw, partial = false) => {
+ const data = { ...raw }
+ for (const key of ['_id', 'id', 'createdAt', 'updatedAt', '__v']) delete data[key]
+ for (const key of ['nombre', 'correo', 'rfc', 'sku', 'telefono', 'estado']) {
+  if (typeof data[key] === 'string') data[key] = data[key].trim()
+ }
+ if (typeof data.correo === 'string') data.correo = data.correo.toLowerCase()
+ if (typeof data.rfc === 'string') data.rfc = data.rfc.toUpperCase()
+ if (typeof data.sku === 'string') data.sku = data.sku.toUpperCase()
+ if (!partial && !data.estado) data.estado = 'Activo'
+ if ('estado' in data && !['Activo', 'Inactivo'].includes(data.estado)) throw Object.assign(new Error('Estado inválido'), {status:400})
+ if ('telefono' in data && data.telefono !== '' && !/^\d{10}$/.test(data.telefono)) throw Object.assign(new Error('El teléfono debe tener exactamente 10 dígitos'), {status:400})
+ if ('correo' in data && data.correo !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.correo)) throw Object.assign(new Error('Correo electrónico inválido'), {status:400})
+ if ('rfc' in data && data.rfc !== '' && !/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/.test(data.rfc)) throw Object.assign(new Error('El RFC debe tener un formato válido de 12 o 13 caracteres'), {status:400})
+ if (route === 'usuarios' && 'nombre' in data && !/^[\p{L}\p{M} .'-]+$/u.test(data.nombre)) throw Object.assign(new Error('El nombre de usuario solo admite letras y espacios'), {status:400})
+ if ('rol' in data && !['Administrador','Gerente','Empleado'].includes(data.rol)) throw Object.assign(new Error('Rol inválido'), {status:400})
+ return data
+}
 const id = prefix => `${prefix}-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2,6).toUpperCase()}`
 const catalog = [
  ['clientes',Cliente,['nombre','correo','telefono'],'CLI'],
@@ -37,7 +55,7 @@ for (const [route,Model,required,prefix] of catalog) {
  app.get(`/api/${route}`,wrap(async(req,res)=>res.json(await Model.find().sort({createdAt:-1}).lean())))
  app.post(`/api/${route}`,wrap(async(req,res)=>{
   if(!valid(req.body,required))return fail(res,`Campos obligatorios: ${required.join(', ')}`)
-  const data={...req.body,id:id(prefix)}
+  const data={...normalize(route,req.body),id:id(prefix)}
   if(route==='productos'){
    data.precio=Number(req.body.precio);data.stock=Number(req.body.stock ?? 0);data.stockMinimo=Number(req.body.stockMinimo ?? 5)
    if(!Number.isFinite(data.precio)||data.precio<0||!Number.isInteger(data.stock)||data.stock<0||!Number.isInteger(data.stockMinimo)||data.stockMinimo<0)return fail(res,'Precio o existencias inválidos')
@@ -45,11 +63,12 @@ for (const [route,Model,required,prefix] of catalog) {
   const result=await Model.create(data);res.status(201).json(result)
  }))
  app.put(`/api/${route}/:id`,wrap(async(req,res)=>{
-  const data={...req.body};delete data._id;delete data.id;delete data.createdAt;delete data.updatedAt
+  const data=normalize(route,req.body,true)
   if(route==='productos'){
    for(const k of ['precio','stock','stockMinimo'])if(k in data){data[k]=Number(data[k]);if(!Number.isFinite(data[k])||data[k]<0||(k!=='precio'&&!Number.isInteger(data[k])))return fail(res,'Valor numérico inválido')}
   }
-  const result=await Model.findByIdAndUpdate(req.params.id,{$set:data},{new:true,runValidators:true});if(!result)return fail(res,'Registro no encontrado',404);res.json(result)
+  if(required.some(k => k in data && (typeof data[k] !== 'string' || !data[k].trim())))return fail(res,'No puedes vaciar campos obligatorios')
+   const result=await Model.findByIdAndUpdate(req.params.id,{$set:data},{new:true,runValidators:true});if(!result)return fail(res,'Registro no encontrado',404);res.json(result)
  }))
  app.delete(`/api/${route}/:id`,wrap(async(req,res)=>{
   if(route==='productos' && (await Venta.exists({'items.producto':req.params.id}) || await Compra.exists({'items.producto':req.params.id})))return fail(res,'El producto tiene movimientos y no se puede eliminar',409)
@@ -67,10 +86,29 @@ function parseItems(items){
 async function registrarOperacion(tipo,body){
  const venta=tipo==='ventas',Model=venta?Venta:Compra,items=parseItems(body.items)
  const tercero=venta?body.cliente:body.proveedor
- if(!mongoose.isValidObjectId(tercero)||!(await (venta?Cliente:Proveedor).exists({_id:tercero})))throw Object.assign(new Error('Cliente o proveedor no válido'),{status:400})
+ const ModeloTercero = venta ? Cliente : Proveedor
+
+if (!mongoose.isValidObjectId(tercero)) {
+  throw Object.assign(
+    new Error('El cliente o proveedor seleccionado no es válido'),
+    { status: 400 }
+  )
+}
+
+const terceroActivo = await ModeloTercero.exists({
+  _id: tercero,
+  estado: { $ne: 'Inactivo' }
+})
+
+if (!terceroActivo) {
+  throw Object.assign(
+    new Error('El cliente o proveedor no existe o está inactivo'),
+    { status: 400 }
+  )
+}
  const grouped=new Map();for(const item of items){const k=String(item.producto);grouped.set(k,(grouped.get(k)||0)+item.cantidad)}
  const ids=[...grouped.keys()]
- const products=await Producto.find({_id:{$in:ids}})
+ const products=await Producto.find({_id:{$in:ids},estado:{$ne:'Inactivo'}})
  if(products.length!==ids.length)throw Object.assign(new Error('Hay productos que no existen'),{status:400})
  const total=items.reduce((s,x)=>s+x.cantidad*x.precio,0)
  // MongoDB Atlas supports transactions on replica sets. All inventory changes and the operation commit together.
@@ -111,6 +149,7 @@ app.use((err,req,res,next)=>{
  console.error(err.message)
  if(err.code===11000)return fail(res,'Ya existe un registro con ese valor único',409)
  if(err.name==='ValidationError'||err.name==='CastError')return fail(res,err.message)
+  if(err.status===400)return fail(res,err.message,400)
  res.status(err.status||500).json({mensaje:err.status?err.message:'Error interno del servidor'})
 })
 if(!process.env.MONGODB_URI){console.error('Falta MONGODB_URI en apps/backend/.env');process.exit(1)}
