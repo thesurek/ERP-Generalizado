@@ -4,7 +4,7 @@ const make=(name,fields)=>mongoose.model(name,new mongoose.Schema({...base,...fi
 const Empresa=make('Empresa',{nombre:{type:String,required:true},rfc:{type:String,required:true},correo:String,telefono:String,direccion:String})
 const Proveedor=make('Proveedor',{nombre:{type:String,required:true},correo:{type:String,required:true},telefono:String,direccion:String})
 const Producto=make('Producto',{nombre:{type:String,required:true},sku:{type:String,required:true,unique:true},categoria:String,precio:{type:Number,required:true,min:0},stock:{type:Number,default:0,min:0},stockMinimo:{type:Number,default:5,min:0},descripcion:String})
-const Usuario=make('Usuario',{nombre:{type:String,required:true},correo:{type:String,required:true,unique:true},rol:{type:String,enum:['Administrador','Gerente','Empleado'],default:'Empleado'}})
+const Usuario=make('Usuario',{nombre:{type:String,required:true},correo:{type:String,required:true,unique:true,lowercase:true,trim:true},rol:{type:String,enum:['Administrador','Empleado'],default:'Empleado'},passwordHash:{type:String,select:false}})
 const item=new mongoose.Schema({producto:{type:mongoose.Schema.Types.ObjectId,ref:'Producto',required:true},cantidad:{type:Number,min:1,required:true},precio:{type:Number,min:0,required:true}},{_id:false})
 const Venta=make('Venta',{estado:{
   type: String,

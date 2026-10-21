@@ -30,3 +30,7 @@
  .erp .form-grid{grid-template-columns:minmax(0,1fr)!important}
  .erp .item-row{display:flex;flex-wrap:wrap}
 }
+
+.erp-login{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg,#f3f5fa);padding:24px;color:var(--text,#1f2937)}
+.erp-login-card{width:min(100%,420px);padding:36px;background:var(--panel,#fff);border:1px solid #cbd5e1;border-radius:18px;display:flex;flex-direction:column;gap:14px;box-shadow:0 12px 35px #0001}
+.erp-login-card h1{font-size:25px;margin:0}.erp-login-card p{margin:0 0 8px;color:#64748b}.erp-login-card label{display:flex;flex-direction:column;gap:6px;font-weight:600}.erp-login-card input{padding:12px;border:1px solid #94a3b8;border-radius:8px;background:transparent;color:inherit}.erp-login-card button{padding:12px}.erp-login-logo{width:48px;height:48px;background:#2563eb;color:white;border-radius:12px;display:grid;place-items:center;font-size:26px;font-weight:bold}

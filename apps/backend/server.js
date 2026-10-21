@@ -1,12 +1,118 @@
 const express = require('express')
 const cors = require('cors')
 const mongoose = require('mongoose')
+const crypto = require('node:crypto')
 require('dotenv').config()
 const Cliente = require('./models/Cliente')
 const { Empresa, Proveedor, Producto, Venta, Compra, Movimiento, Usuario } = require('./models/ERP')
 const app = express()
 app.use(cors())
 app.use(express.json({ limit: '100kb' }))
+// Autenticación con tokens HMAC y hash scrypt. AUTH_SECRET y SETUP_KEY son secretos del servidor.
+const AUTH_SECRET = process.env.AUTH_SECRET || ''
+const SETUP_KEY = process.env.SETUP_KEY || ''
+const authError = (msg, status=401) => Object.assign(new Error(msg), {status})
+const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url')
+const sign = payload => crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('base64url')
+const tokenFor = user => {
+  const payload = encode({sub:String(user._id), exp:Date.now()+8*60*60*1000})
+  return `${payload}.${sign(payload)}`
+}
+const passwordHash = password => {
+  const salt=crypto.randomBytes(16).toString('hex')
+  return `${salt}:${crypto.scryptSync(password,salt,64).toString('hex')}`
+}
+const passwordMatches = (password, hash) => {
+  if (!hash || typeof hash!=='string') return false
+  const [salt,expected]=hash.split(':')
+  if (!salt || !expected || !/^[a-f0-9]{128}$/.test(expected)) return false
+  const actual=crypto.scryptSync(password,salt,64)
+  return crypto.timingSafeEqual(actual,Buffer.from(expected,'hex'))
+}
+const publicUser = u => ({_id:u._id,id:u.id,nombre:u.nombre,correo:u.correo,rol:u.rol,estado:u.estado})
+const validPassword = v => typeof v==='string' && v.length>=12 && v.length<=128
+const loginAttempts = new Map()
+app.post('/api/auth/login', async (req,res,next) => {
+  try {
+    if (!AUTH_SECRET) return res.status(503).json({mensaje:'Falta configurar AUTH_SECRET en el servidor'})
+    const correo=String(req.body.correo||'').trim().toLowerCase()
+    const password=req.body.password
+    const key=`${req.ip}:${correo}`
+    const attempts=loginAttempts.get(key)
+    if (attempts && attempts.until>Date.now() && attempts.count>=5) return res.status(429).json({mensaje:'Demasiados intentos. Espera 15 minutos.'})
+    const u=await Usuario.findOne({correo,estado:{$ne:'Inactivo'}}).select('+passwordHash')
+    if (typeof password!=='string' || !u || !passwordMatches(password,u.passwordHash)) {
+      const count=(attempts?.until>Date.now()?attempts.count:0)+1
+      loginAttempts.set(key,{count,until:Date.now()+15*60*1000})
+      return res.status(401).json({mensaje:'Correo o contraseña incorrectos'})
+    }
+    loginAttempts.delete(key)
+    return res.json({token:tokenFor(u),usuario:publicUser(u)})
+  } catch(e) {next(e)}
+})
+// Alta inicial: requiere clave de instalación, no permite crear otro administrador una vez activado.
+app.post('/api/auth/setup', async (req,res,next) => {
+  try {
+    if (!AUTH_SECRET || !SETUP_KEY || SETUP_KEY.length<20) return res.status(503).json({mensaje:'Configura AUTH_SECRET y SETUP_KEY (mínimo 20 caracteres)'})
+    const existing=await Usuario.exists({rol:'Administrador',passwordHash:{$exists:true,$ne:''}})
+    if (existing) return res.status(409).json({mensaje:'El administrador inicial ya está configurado'})
+    const supplied=String(req.body.setupKey||'')
+    const aa=Buffer.from(supplied),bb=Buffer.from(SETUP_KEY)
+    if (aa.length!==bb.length || !crypto.timingSafeEqual(aa,bb)) return res.status(403).json({mensaje:'Clave de instalación incorrecta'})
+    const {nombre,correo,password}=req.body
+    if (!nombre?.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo||'') || !validPassword(password)) return res.status(400).json({mensaje:'Indica nombre, correo válido y contraseña de al menos 12 caracteres'})
+    const normalized=correo.trim().toLowerCase()
+    if(await Usuario.exists({correo:normalized})) return res.status(409).json({mensaje:'Ese correo ya existe. Usa uno nuevo para la cuenta inicial.'})
+    const u=await Usuario.create({id:`USR-${crypto.randomUUID()}`,nombre:nombre.trim(),correo:normalized,rol:'Administrador',estado:'Activo',passwordHash:passwordHash(password)})
+    res.status(201).json({token:tokenFor(u),usuario:publicUser(u)})
+  } catch(e) {next(e)}
+})
+app.use('/api', async (req,res,next) => {
+  try {
+    if (!AUTH_SECRET) return res.status(503).json({mensaje:'Configura AUTH_SECRET en el backend'})
+    const token=(req.headers.authorization||'').replace(/^Bearer /i,'')
+    const [payload,signature]=token.split('.')
+    if (!payload || !signature) throw authError('Inicia sesión para continuar')
+    const a=Buffer.from(signature),b=Buffer.from(sign(payload))
+    if (a.length!==b.length || !crypto.timingSafeEqual(a,b)) throw authError('Sesión inválida')
+    let decoded
+    try { decoded=JSON.parse(Buffer.from(payload,'base64url').toString('utf8')) } catch {throw authError('Sesión inválida')}
+    if (!decoded.exp || decoded.exp<Date.now() || !mongoose.isValidObjectId(decoded.sub)) throw authError('Sesión vencida')
+    const user=await Usuario.findById(decoded.sub).select('+passwordHash').lean()
+    if (!user || user.estado==='Inactivo' || !user.passwordHash || !['Administrador','Empleado'].includes(user.rol)) throw authError('Acceso denegado',403)
+    req.user=user
+    if (user.rol!=='Administrador' && (req.path==='/usuarios' || req.path.startsWith('/usuarios/') || req.path==='/reportes')) return res.status(403).json({mensaje:'Permiso exclusivo del administrador'})
+    next()
+  } catch(e) {next(e)}
+})
+app.get('/api/auth/me',(req,res)=>res.json({usuario:publicUser(req.user)}))
+// Administración de cuentas: nunca se envía passwordHash al navegador.
+app.get('/api/usuarios',async(req,res,next)=>{try{res.json((await Usuario.find().sort({createdAt:-1}).lean()).map(publicUser))}catch(e){next(e)}})
+app.post('/api/usuarios',async(req,res,next)=>{try{
+  const {nombre,correo,rol,estado,password}=req.body
+  if(!nombre?.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo||'') || !['Administrador','Empleado'].includes(rol) || !['Activo','Inactivo'].includes(estado||'Activo') || !validPassword(password)) return res.status(400).json({mensaje:'Completa nombre, correo, rol y contraseña (mínimo 12 caracteres)'})
+  const u=await Usuario.create({id:`USR-${crypto.randomUUID()}`,nombre:nombre.trim(),correo:correo.trim().toLowerCase(),rol,estado:estado||'Activo',passwordHash:passwordHash(password)})
+  res.status(201).json(publicUser(u))
+}catch(e){next(e)}})
+app.put('/api/usuarios/:id',async(req,res,next)=>{try{
+  const u=await Usuario.findById(req.params.id).select('+passwordHash')
+  if(!u) return res.status(404).json({mensaje:'Usuario no encontrado'})
+  const {nombre,correo,rol,estado,password}=req.body
+  if(rol!==undefined && !['Administrador','Empleado'].includes(rol)) return res.status(400).json({mensaje:'Rol inválido'})
+  if(estado!==undefined && !['Activo','Inactivo'].includes(estado)) return res.status(400).json({mensaje:'Estado inválido'})
+  if(correo!==undefined && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) return res.status(400).json({mensaje:'Correo inválido'})
+  if(password && !validPassword(password)) return res.status(400).json({mensaje:'La contraseña debe tener al menos 12 caracteres'})
+  if(String(u._id)===String(req.user._id) && (rol==='Empleado'||estado==='Inactivo')) return res.status(400).json({mensaje:'No puedes quitarte tu propio acceso de administrador'})
+  if(u.rol==='Administrador' && (rol==='Empleado'||estado==='Inactivo') && await Usuario.countDocuments({rol:'Administrador',estado:'Activo',passwordHash:{$exists:true,$ne:''}})<=1) return res.status(400).json({mensaje:'Debe existir al menos un administrador activo'})
+  if(nombre!==undefined)u.nombre=nombre.trim()
+  if(correo!==undefined)u.correo=correo.trim().toLowerCase()
+  if(rol!==undefined)u.rol=rol
+  if(estado!==undefined)u.estado=estado
+  if(password)u.passwordHash=passwordHash(password)
+  await u.save();res.json(publicUser(u))
+}catch(e){next(e)}})
+app.delete('/api/usuarios/:id',(_req,res)=>res.status(405).json({mensaje:'Desactiva la cuenta en lugar de eliminarla'}))
+
 // Modo de demostración pública
 const DEMO_MODE = process.env.DEMO_MODE === 'true'
 
@@ -40,7 +146,7 @@ const normalize = (route, raw, partial = false) => {
  if ('correo' in data && data.correo !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.correo)) throw Object.assign(new Error('Correo electrónico inválido'), {status:400})
  if ('rfc' in data && data.rfc !== '' && !/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/.test(data.rfc)) throw Object.assign(new Error('El RFC debe tener un formato válido de 12 o 13 caracteres'), {status:400})
  if (route === 'usuarios' && 'nombre' in data && !/^[\p{L}\p{M} .'-]+$/u.test(data.nombre)) throw Object.assign(new Error('El nombre de usuario solo admite letras y espacios'), {status:400})
- if ('rol' in data && !['Administrador','Gerente','Empleado'].includes(data.rol)) throw Object.assign(new Error('Rol inválido'), {status:400})
+ if ('rol' in data && !['Administrador','Empleado'].includes(data.rol)) throw Object.assign(new Error('Rol inválido'), {status:400})
  return data
 }
 const id = prefix => `${prefix}-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2,6).toUpperCase()}`
@@ -49,7 +155,6 @@ const catalog = [
  ['empresas',Empresa,['nombre','rfc'],'EMP'],
  ['proveedores',Proveedor,['nombre','correo'],'PROV'],
  ['productos',Producto,['nombre','sku'],'PROD'],
- ['usuarios',Usuario,['nombre','correo'],'USR']
 ]
 for (const [route,Model,required,prefix] of catalog) {
  app.get(`/api/${route}`,wrap(async(req,res)=>res.json(await Model.find().sort({createdAt:-1}).lean())))
@@ -71,6 +176,7 @@ for (const [route,Model,required,prefix] of catalog) {
    const result=await Model.findByIdAndUpdate(req.params.id,{$set:data},{new:true,runValidators:true});if(!result)return fail(res,'Registro no encontrado',404);res.json(result)
  }))
  app.delete(`/api/${route}/:id`,wrap(async(req,res)=>{
+  if(['clientes','proveedores'].includes(route))return fail(res,'Desactiva el registro para conservar el historial',405)
   if(route==='productos' && (await Venta.exists({'items.producto':req.params.id}) || await Compra.exists({'items.producto':req.params.id})))return fail(res,'El producto tiene movimientos y no se puede eliminar',409)
   const result=await Model.findByIdAndDelete(req.params.id);if(!result)return fail(res,'Registro no encontrado',404);res.json({mensaje:'Registro eliminado'})
  }))
@@ -151,7 +257,7 @@ app.use((err,req,res,next)=>{
  console.error(err.message)
  if(err.code===11000)return fail(res,'Ya existe un registro con ese valor único',409)
  if(err.name==='ValidationError'||err.name==='CastError')return fail(res,err.message)
-  if(err.status===400)return fail(res,err.message,400)
+  if(err.status)return fail(res,err.message,err.status)
  res.status(err.status||500).json({mensaje:err.status?err.message:'Error interno del servidor'})
 })
 if(!process.env.MONGODB_URI){console.error('Falta MONGODB_URI en apps/backend/.env');process.exit(1)}
