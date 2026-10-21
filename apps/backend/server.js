@@ -85,27 +85,24 @@ function parseItems(items){
 }
 async function registrarOperacion(tipo,body){
  const venta=tipo==='ventas',Model=venta?Venta:Compra,items=parseItems(body.items)
- const tercero=venta?body.cliente:body.proveedor
- const ModeloTercero = venta ? Cliente : Proveedor
-
-if (!mongoose.isValidObjectId(tercero)) {
-  throw Object.assign(
-    new Error('El cliente o proveedor seleccionado no es válido'),
-    { status: 400 }
-  )
-}
-
-const terceroActivo = await ModeloTercero.exists({
-  _id: tercero,
-  estado: { $ne: 'Inactivo' }
-})
-
-if (!terceroActivo) {
-  throw Object.assign(
-    new Error('El cliente o proveedor no existe o está inactivo'),
-    { status: 400 }
-  )
-}
+ const tipoCliente = venta && body.tipoCliente === 'general' ? 'general' : 'registrado'
+ if (venta && body.tipoCliente !== undefined && !['general', 'registrado'].includes(body.tipoCliente)) {
+  throw Object.assign(new Error('Tipo de cliente inválido'), {status:400})
+ }
+ const tercero = venta ? body.cliente : body.proveedor
+ const ventaGeneral = venta && tipoCliente === 'general'
+ let nombreTercero = ''
+ if (!ventaGeneral) {
+  if (!mongoose.isValidObjectId(tercero)) {
+   throw Object.assign(new Error('El cliente o proveedor seleccionado no es válido'), {status:400})
+  }
+  const ModeloTercero = venta ? Cliente : Proveedor
+  const registro = await ModeloTercero.findOne({_id:tercero, estado:{$ne:'Inactivo'}}).select('nombre').lean()
+  if (!registro) {
+   throw Object.assign(new Error('El cliente o proveedor no existe o está inactivo'), {status:400})
+  }
+  nombreTercero = registro.nombre
+ }
  const grouped=new Map();for(const item of items){const k=String(item.producto);grouped.set(k,(grouped.get(k)||0)+item.cantidad)}
  const ids=[...grouped.keys()]
  const products=await Producto.find({_id:{$in:ids},estado:{$ne:'Inactivo'}})
@@ -121,7 +118,12 @@ if (!terceroActivo) {
     const changed=await Producto.updateOne(filter,{$inc:{stock:venta?-cantidad:cantidad}},{session})
     if(changed.modifiedCount!==1)throw Object.assign(new Error('Existencias insuficientes o producto inexistente'),{status:409})
    }
-   const [doc]=await Model.create([{id:id(venta?'VEN':'COM'),[venta?'cliente':'proveedor']:tercero,items,total,estado:'Registrada'}],{session})
+   const operacion = {id:id(venta?'VEN':'COM'),items,total,estado:'Registrada'}
+   if (venta) {
+    operacion.tipoCliente = tipoCliente
+    if (!ventaGeneral) { operacion.cliente = tercero; operacion.clienteNombre = nombreTercero }
+   } else { operacion.proveedor = tercero }
+   const [doc]=await Model.create([operacion],{session})
    created=doc
    await Movimiento.insertMany(items.map(item=>({id:id('MOV'),producto:item.producto,tipo:venta?'Salida':'Entrada',cantidad:item.cantidad,referencia:doc.id,fecha:new Date()})),{session})
   })

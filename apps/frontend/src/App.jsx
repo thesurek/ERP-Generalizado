@@ -219,31 +219,100 @@ function Catalog({ type, rows, done }) {
 }
 
 function Operations({ type, data, done }) {
+    const venta = type === 'ventas'
+    const third = venta ? 'clientes' : 'proveedores'
+    const rows = data[type] || []
+    const products = data.productos || []
+    const partners = data[third] || []
+    const [open, setOpen] = useState(false)
+    const [partner, setPartner] = useState('')
+    const [tipoCliente, setTipoCliente] = useState('registrado')
+    const [items, setItems] = useState([{ producto: '', cantidad: 1, precio: 0 }])
+    const [error, setError] = useState('')
+    const [busy, setBusy] = useState(false)
 
-    const venta = type === 'ventas', third = venta ? 'clientes' : 'proveedores', rows = data[type] || [], products = data.productos || [], partners = data[third] || []
+    const updateItem = (i, key, value) => setItems(a => a.map((x, j) => j === i
+        ? { ...x, [key]: value, ...(key === 'producto' ? { precio: products.find(p => p._id === value)?.precio ?? 0 } : {}) }
+        : x))
+    const total = items.reduce((s, x) => s + (Number(x.cantidad) || 0) * (Number(x.precio) || 0), 0)
+    const activePartners = partners.filter(p => p.estado === 'Activo')
 
-    const [open, setOpen] = useState(false), [partner, setPartner] = useState(''), [items, setItems] = useState([{ producto: '', cantidad: 1, precio: 0 }]), [error, setError] = useState(''), [busy, setBusy] = useState(false)
+    const save = async e => {
+        e.preventDefault()
+        setBusy(true)
+        setError('')
+        try {
+            await request(type, { method: 'POST', body: JSON.stringify(venta ? { tipoCliente, ...(tipoCliente === 'registrado' ? { cliente: partner } : {}), items } : { proveedor: partner, items }) })
+            setOpen(false)
+            setPartner('')
+            setTipoCliente('registrado')
+            setItems([{ producto: '', cantidad: 1, precio: 0 }])
+            done()
+        } catch (err) {
+            setError(err.message)
+        } finally {
+            setBusy(false)
+        }
+    }
 
-    const updateItem = (i, key, value) => setItems(a => a.map((x, j) => j === i ? { ...x, [key]: value, ...(key === 'producto' ? { precio: products.find(p => p._id === value)?.precio ?? 0 } : {}) } : x))
-
-    const total = items.reduce((s, x) => s + (Number(x.cantidad) || 0) * (Number(x.precio) || 0), 0)
-
-    const save = async e => { e.preventDefault(); setBusy(true); setError(''); try { await request(type, { method: 'POST', body: JSON.stringify({ [venta ? 'cliente' : 'proveedor']: partner, items }) }); setOpen(false); setPartner(''); setItems([{ producto: '', cantidad: 1, precio: 0 }]); done() } catch (err) { setError(err.message) } finally { setBusy(false) } }
-
-    return <div className="panel"><div className="panel-head"><div><h3>Historial de {type}</h3><p className="muted">Cada operación actualiza automáticamente las existencias</p></div><button className="primary" onClick={() => { setError(''); setOpen(true) }}>＋ Nueva {venta ? 'venta' : 'compra'}</button></div><div className="table-wrap"><table><thead><tr><th>FOLIO</th><th>{venta ? 'CLIENTE' : 'PROVEEDOR'}</th><th>FECHA</th><th>PRODUCTOS</th><th>TOTAL</th><th>ESTADO</th></tr></thead><tbody>{rows.map(r => <tr key={r._id}><td>{r.id}</td><td>{r[venta ? 'cliente' : 'proveedor']?.nombre || '—'}</td><td>{date(r.createdAt)}</td><td>{r.items?.map(i => `${i.producto?.nombre || 'Producto'} × ${i.cantidad}`).join(', ')}</td><td><strong>{pesos(r.total)}</strong></td><td><span className="pill green">Registrada</span></td></tr>)}</tbody></table>{!rows.length && <Empty />}</div>{open && <div className="overlay" onClick={() => setOpen(false)}><div className="modal wide" onClick={e => e.stopPropagation()}><div className="modal-head"><h2>Nueva {venta ? 'venta' : 'compra'}</h2><button onClick={() => setOpen(false)}>✕</button></div><form onSubmit={save}><label>{venta ? 'Cliente' : 'Proveedor'}<select required value={partner} onChange={e => setPartner(e.target.value)}><option value="">Selecciona una opción</option>{partners
-
-        .filter(p => p.estado === 'Activo')
-
-        .map(p => (
-
-            <option key={p._id} value={p._id}>
-
-                {p.nombre}
-
-            </option>
-
-        ))}</select></label><h4>Detalle de productos</h4>{items.map((item, i) => <div className="item-row" key={i}><label>Producto<select required value={item.producto} onChange={e => updateItem(i, 'producto', e.target.value)}><option value="">Selecciona producto</option>{products.map(p => <option key={p._id} value={p._id}>{p.nombre} · Stock {p.stock}</option>)}</select></label><label>Cantidad<input type="number" min="1" step="1" required value={item.cantidad} onChange={e => updateItem(i, 'cantidad', e.target.value)} /></label><label>Precio<input type="number" min="0" step="0.01" required value={item.precio} onChange={e => updateItem(i, 'precio', e.target.value)} /></label><button type="button" onClick={() => setItems(a => a.filter((_, j) => j !== i))} disabled={items.length === 1}>✕</button></div>)}<button type="button" className="outline" onClick={() => setItems(a => [...a, { producto: '', cantidad: 1, precio: 0 }])}>＋ Agregar producto</button><div className="operation-total">Total <strong>{pesos(total)}</strong></div>{error && <div className="error">{error}</div>}<div className="modal-actions"><button type="button" onClick={() => setOpen(false)}>Cancelar</button><button className="primary" disabled={busy || !partners.length || !products.length}>{busy ? 'Guardando...' : 'Confirmar operación'}</button></div></form></div></div>}</div>
-
+    return <div className="panel">
+        <div className="panel-head">
+            <div><h3>Historial de {type}</h3><p className="muted">Cada operación actualiza automáticamente las existencias</p></div>
+            <button className="primary" onClick={() => { setError(''); setOpen(true) }}>＋ Nueva {venta ? 'venta' : 'compra'}</button>
+        </div>
+        <div className="table-wrap">
+            <table><thead><tr><th>FOLIO</th><th>{venta ? 'CLIENTE' : 'PROVEEDOR'}</th><th>FECHA</th><th>PRODUCTOS</th><th>TOTAL</th><th>ESTADO</th></tr></thead>
+                <tbody>{rows.map(r => <tr key={r._id}>
+                    <td>{r.id}</td>
+                    <td>{venta && r.tipoCliente === 'general' ? 'Público en general' : (r[venta ? 'cliente' : 'proveedor']?.nombre || (venta ? r.clienteNombre : '') || '—')}</td>
+                    <td>{date(r.createdAt)}</td>
+                    <td>{r.items?.map(i => `${i.producto?.nombre || 'Producto'} × ${i.cantidad}`).join(', ')}</td>
+                    <td><strong>{pesos(r.total)}</strong></td>
+                    <td><span className="pill green">Registrada</span></td>
+                </tr>)}</tbody>
+            </table>
+            {!rows.length && <Empty />}
+        </div>
+        {open && <div className="overlay" onClick={() => setOpen(false)}>
+            <div className="modal wide" onClick={e => e.stopPropagation()}>
+                <div className="modal-head"><h2>Nueva {venta ? 'venta' : 'compra'}</h2><button onClick={() => setOpen(false)}>✕</button></div>
+                <form onSubmit={save}>
+                    {venta && <label>Tipo de cliente
+                        <select value={tipoCliente} onChange={e => { setTipoCliente(e.target.value); setPartner(''); setError('') }}>
+                            <option value="registrado">Cliente registrado</option>
+                            <option value="general">Público en general (venta rápida)</option>
+                        </select>
+                    </label>}
+                    {(!venta || tipoCliente === 'registrado') && <label>{venta ? 'Cliente' : 'Proveedor'}
+                        <select required value={partner} onChange={e => setPartner(e.target.value)}>
+                            <option value="">Selecciona una opción</option>
+                            {activePartners.map(p => <option key={p._id} value={p._id}>{p.nombre}</option>)}
+                        </select>
+                    </label>}
+                    {venta && tipoCliente === 'general' && <p className="muted">No requiere registrar al comprador. La venta quedará registrada como Público en general.</p>}
+                    <h4>Detalle de productos</h4>
+                    {items.map((item, i) => <div className="item-row" key={i}>
+                        <label>Producto<select required value={item.producto} onChange={e => updateItem(i, 'producto', e.target.value)}>
+                            <option value="">Selecciona producto</option>
+                            {products.map(p => <option key={p._id} value={p._id}>{p.nombre} · Stock {p.stock}</option>)}
+                        </select></label>
+                        <label>Cantidad<input type="number" min="1" step="1" required value={item.cantidad} onChange={e => updateItem(i, 'cantidad', e.target.value)} /></label>
+                        <label>Precio<input type="number" min="0" step="0.01" required value={item.precio} onChange={e => updateItem(i, 'precio', e.target.value)} /></label>
+                        <button type="button" onClick={() => setItems(a => a.filter((_, j) => j !== i))} disabled={items.length === 1}>✕</button>
+                    </div>)}
+                    <button type="button" className="outline" onClick={() => setItems(a => [...a, { producto: '', cantidad: 1, precio: 0 }])}>＋ Agregar producto</button>
+                    <div className="operation-total">Total <strong>{pesos(total)}</strong></div>
+                    {error && <div className="error">{error}</div>}
+                    <div className="modal-actions">
+                        <button type="button" onClick={() => setOpen(false)}>Cancelar</button>
+                        <button className="primary" disabled={busy || !products.length || (tipoCliente === 'registrado' && !activePartners.length)}>
+                            {busy ? 'Guardando...' : 'Confirmar operación'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>}
+    </div>
 }
 
 function Inventory({ data }) { const [q, setQ] = useState(''); const rows = (data.inventario || []).filter(p => p.nombre.toLowerCase().includes(q.toLowerCase())); return <div className="two-col inventory-layout"><div className="panel"><div className="panel-head"><div><h3>Existencias de productos</h3><p className="muted">Entradas desde compras, salidas desde ventas</p></div><input placeholder="Buscar producto..." value={q} onChange={e => setQ(e.target.value)} /></div><div className="table-wrap"><table><thead><tr><th>PRODUCTO</th><th>SKU</th><th>STOCK</th><th>MÍNIMO</th><th>ESTADO</th></tr></thead><tbody>{rows.map(p => <tr key={p._id}><td>{p.nombre}</td><td>{p.sku}</td><td><strong>{p.stock}</strong></td><td>{p.stockMinimo}</td><td><span className={p.stock <= p.stockMinimo ? 'pill amber' : 'pill green'}>{p.stock <= p.stockMinimo ? 'Stock bajo' : 'Disponible'}</span></td></tr>)}</tbody></table>{!rows.length && <Empty />}</div></div><div className="panel"><h3>Movimientos recientes</h3>{(data.movimientos || []).map(m => <div className="movement" key={m._id}><span className={m.tipo === 'Entrada' ? 'pill green' : 'pill amber'}>{m.tipo}</span><strong>{m.producto?.nombre || 'Producto'}</strong><span>{m.cantidad}</span><small>{date(m.createdAt)}</small></div>)}{!data.movimientos?.length && <Empty />}</div></div> }

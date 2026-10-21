@@ -10,7 +10,7 @@ const Venta=make('Venta',{estado:{
   type: String,
   enum: ['Registrada', 'Cancelada'],
   default: 'Registrada'
-},cliente:{type:mongoose.Schema.Types.ObjectId,ref:'Cliente',required:true},items:[item],total:{type:Number,required:true,min:0}})
+},tipoCliente:{type:String,enum:['registrado','general'],default:'registrado'},cliente:{type:mongoose.Schema.Types.ObjectId,ref:'Cliente',required:false},clienteNombre:{type:String,default:''},items:[item],total:{type:Number,required:true,min:0}})
 const Compra=make('Compra',{
   estado: {
     type: String,
